@@ -9,4 +9,8 @@ module.exports = {
   API_KEY: process.env.API_KEY,
   UPLOAD_MAX_SIZE_MB: parseInt(process.env.UPLOAD_MAX_SIZE_MB || '20', 10),
   VISION_TIMEOUT_MS: parseInt(process.env.VISION_TIMEOUT_MS || '60000', 10),
+  OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+  OPENAI_MODEL: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+  AI_CLEANING_CONFIDENCE_THRESHOLD: parseFloat(process.env.AI_CLEANING_CONFIDENCE_THRESHOLD || '0.8', 10),
+  AI_CLEANING_MAX_CHARS: parseInt(process.env.AI_CLEANING_MAX_CHARS || '12000', 10),
 };
