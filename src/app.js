@@ -1,4 +1,5 @@
 const express = require('express');
+const cors = require('cors');
 const swaggerUi = require('swagger-ui-express');
 const swaggerJsdoc = require('swagger-jsdoc');
 const authRoutes = require('./routes/auth.routes');
@@ -7,6 +8,8 @@ const aiCleaningRoutes = require('./routes/ai-cleaning.routes');
 const { errorHandler } = require('./middleware/errorHandler');
 
 const app = express();
+
+app.use(cors());
 
 const swaggerSpec = swaggerJsdoc({
   definition: {
