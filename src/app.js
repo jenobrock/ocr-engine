@@ -1,6 +1,7 @@
 const express = require('express');
 const swaggerUi = require('swagger-ui-express');
 const swaggerJsdoc = require('swagger-jsdoc');
+const authRoutes = require('./routes/auth.routes');
 const ocrRoutes = require('./routes/ocr.routes');
 const aiCleaningRoutes = require('./routes/ai-cleaning.routes');
 const { errorHandler } = require('./middleware/errorHandler');
@@ -28,6 +29,7 @@ app.use(express.urlencoded({ extended: true }));
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+app.use('/api/auth', authRoutes);
 app.use('/api/ocr', ocrRoutes);
 app.use('/api/ai-cleaning', aiCleaningRoutes);
 
