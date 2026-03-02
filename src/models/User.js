@@ -1,14 +1,25 @@
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 
+const crypto = require('crypto');
+
 const userSchema = new mongoose.Schema(
   {
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
     password: { type: String, required: true, select: false },
     name: { type: String, default: '', trim: true },
+    resetPasswordToken: { type: String, select: false },
+    resetPasswordExpires: { type: Date, select: false },
   },
   { timestamps: true }
 );
+
+userSchema.methods.createResetToken = function () {
+  const token = crypto.randomBytes(32).toString('hex');
+  this.resetPasswordToken = crypto.createHash('sha256').update(token).digest('hex');
+  this.resetPasswordExpires = Date.now() + 60 * 60 * 1000; // 1 hour
+  return token;
+};
 
 userSchema.index({ email: 1 });
 
