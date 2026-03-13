@@ -5,6 +5,9 @@ const swaggerJsdoc = require('swagger-jsdoc');
 const authRoutes = require('./routes/auth.routes');
 const ocrRoutes = require('./routes/ocr.routes');
 const aiCleaningRoutes = require('./routes/ai-cleaning.routes');
+const contactRoutes = require('./routes/contact.routes');
+const demoRoutes = require('./routes/demo.routes');
+const newsletterRoutes = require('./routes/newsletter.routes');
 const { errorHandler } = require('./middleware/errorHandler');
 
 const app = express();
@@ -35,6 +38,9 @@ app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 app.use('/api/auth', authRoutes);
 app.use('/api/ocr', ocrRoutes);
 app.use('/api/ai-cleaning', aiCleaningRoutes);
+app.use('/api/contact', contactRoutes);
+app.use('/api/demo', demoRoutes);
+app.use('/api/newsletter', newsletterRoutes);
 
 app.use((req, res) => {
   res.status(404).json({ error: 'Not found' });

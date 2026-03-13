@@ -21,7 +21,7 @@ userSchema.methods.createResetToken = function () {
   return token;
 };
 
-userSchema.index({ email: 1 });
+// Note: email index is already created via unique:true in the schema definition above
 
 userSchema.pre('save', async function (next) {
   if (!this.isModified('password')) return next();

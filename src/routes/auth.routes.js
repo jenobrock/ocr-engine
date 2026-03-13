@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const config = require('../config');
+const { sendWelcomeEmail, sendPasswordResetEmail } = require('../services/mail.service');
 
 const router = express.Router();
 
@@ -29,6 +30,12 @@ router.post('/signup', async (req, res, next) => {
       name: (name || '').trim(),
     });
     await user.save();
+
+    // Send welcome email (non-blocking)
+    sendWelcomeEmail(user.email, user.name).catch((err) => {
+      console.error('[Mail] Welcome email failed:', err.message);
+    });
+
     const token = jwt.sign(
       { userId: user._id.toString(), email: user.email },
       config.JWT_SECRET,
@@ -77,18 +84,36 @@ router.post('/forgot-password', async (req, res, next) => {
       return res.status(400).json({ error: 'Email required' });
     }
     const user = await User.findOne({ email: email.toLowerCase().trim() });
+
+    // Always return the same response to avoid user enumeration
     if (!user) {
-      return res.json({ message: 'If that email exists, a reset token has been generated.' });
+      return res.json({ message: 'Si un compte existe avec cet email, un lien de réinitialisation a été envoyé.' });
     }
+
     const rawToken = user.createResetToken();
     await user.save({ validateBeforeSave: false });
 
-    // In production you would send this via email.
-    // For dev, return the token directly.
-    const resetUrl = `${req.headers.origin || 'http://localhost:4200'}/reset-password?token=${rawToken}`;
-    console.log(`[Auth] Reset link for ${user.email}: ${resetUrl}`);
+    const origin = req.headers.origin || 'http://localhost:4200';
+    const resetUrl = `${origin}/reset-password?token=${rawToken}`;
 
-    res.json({ message: 'If that email exists, a reset token has been generated.', resetToken: rawToken });
+    // Send email via SendGrid
+    const emailSent = await sendPasswordResetEmail(user.email, resetUrl)
+      .then(() => true)
+      .catch((err) => {
+        console.error('[Mail] Reset email failed:', err.message);
+        return false;
+      });
+
+    // In dev mode (no SendGrid), still return the token so it can be tested
+    const isDev = config.NODE_ENV !== 'production' && !config.SENDGRID_API_KEY;
+    if (isDev) {
+      console.log(`[Auth/Dev] Reset link for ${user.email}: ${resetUrl}`);
+    }
+
+    res.json({
+      message: 'Si un compte existe avec cet email, un lien de réinitialisation a été envoyé.',
+      ...(isDev && { resetToken: rawToken }),
+    });
   } catch (err) {
     next(err);
   }
