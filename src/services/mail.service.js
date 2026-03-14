@@ -76,7 +76,7 @@ async function sendWelcomeEmail(to, name) {
           <li>Exporter en Excel, CSV ou base SQL</li>
         </ul>
       </div>
-      <a href="http://13.53.188.101:4200/upload"
+      <a href="${config.APP_URL}/upload"
          style="display:inline-block;background:linear-gradient(135deg,#833AB4,#FD1D1D);color:#fff;font-family:Arial,sans-serif;font-size:15px;font-weight:700;text-decoration:none;padding:14px 32px;border-radius:999px;box-shadow:0 4px 16px rgba(131,58,180,0.35);">
         Commencer maintenant →
       </a>

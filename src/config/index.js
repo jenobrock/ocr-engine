@@ -6,6 +6,7 @@ module.exports = {
   MONGODB_URI: process.env.MONGODB_URI || 'mongodb://localhost:27017/seedscan-ocr',
   SENDGRID_API_KEY: process.env.SENDGRID_API_KEY,
   SENDER_EMAIL: process.env.SENDER_EMAIL || 'noreply@seed-connect.info',
+  APP_URL: process.env.APP_URL || 'https://ocr.seed-connect.com',
   GOOGLE_APPLICATION_CREDENTIALS: process.env.GOOGLE_APPLICATION_CREDENTIALS,
   JWT_SECRET: process.env.JWT_SECRET,
   API_KEY: process.env.API_KEY,

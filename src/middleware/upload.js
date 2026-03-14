@@ -1,5 +1,6 @@
 const multer = require('multer');
 const path = require('path');
+const fs = require('fs');
 const config = require('../config');
 
 const ALLOWED_MIMES = [
@@ -9,9 +10,16 @@ const ALLOWED_MIMES = [
   'image/tiff',
 ];
 
+const UPLOADS_DIR = path.join(process.cwd(), 'uploads');
+
+// Auto-create uploads directory if it doesn't exist
+if (!fs.existsSync(UPLOADS_DIR)) {
+  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+}
+
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, path.join(process.cwd(), 'uploads'));
+    cb(null, UPLOADS_DIR);
   },
   filename: (req, file, cb) => {
     const ext = path.extname(file.originalname) || getExtFromMime(file.mimetype);
