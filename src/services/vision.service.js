@@ -68,20 +68,23 @@ async function runOcrImage(client, buffer) {
 }
 
 /**
- * Run OCR on a PDF or multi-page TIFF using annotateFile (proper PDF support).
+ * Run OCR on a PDF or multi-page TIFF using batchAnnotateFiles (proper PDF support).
  */
 async function runOcrPdf(client, buffer, mimeType) {
-  const [result] = await client.annotateFile({
-    inputConfig: {
-      content: buffer,
-      mimeType: mimeType, // 'application/pdf' or 'image/tiff'
-    },
-    features: [{ type: 'DOCUMENT_TEXT_DETECTION' }],
-    // Process up to 5 pages (Vision API limit for sync annotateFile)
-    pages: [1, 2, 3, 4, 5],
+  const [result] = await client.batchAnnotateFiles({
+    requests: [{
+      inputConfig: {
+        content: buffer,
+        mimeType: mimeType, // 'application/pdf' or 'image/tiff'
+      },
+      features: [{ type: 'DOCUMENT_TEXT_DETECTION' }],
+      // Vision API sync limit: up to 5 pages per request
+      pages: [1, 2, 3, 4, 5],
+    }],
   });
 
-  const responses = result?.responses || [];
+  // batchAnnotateFiles wraps results one level deeper
+  const responses = result?.responses?.[0]?.responses || [];
   let fullText = '';
   const pages = [];
   let totalConf = 0;
