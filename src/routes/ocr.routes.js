@@ -72,15 +72,16 @@ router.post('/upload', upload.single('file'), async (req, res, next) => {
  *       502: { description: OCR failed }
  */
 router.post('/process/:id', async (req, res, next) => {
+  console.log(`[OCR] process request for id=${req.params.id}`);
   try {
     const id = req.params.id;
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(404).json({ error: 'Document not found' });
     }
+
     const doc = await OcrDocument.findById(id);
-    if (!doc) {
-      return res.status(404).json({ error: 'Document not found' });
-    }
+    if (!doc) return res.status(404).json({ error: 'Document not found' });
+
     if (doc.status === 'processing') {
       return res.status(409).json({ error: 'OCR already in progress' });
     }
@@ -88,16 +89,37 @@ router.post('/process/:id', async (req, res, next) => {
       return res.status(409).json({ error: 'Document already processed' });
     }
 
+    // ── Check Vision credentials BEFORE touching DB ──────────────────────────
+    try {
+      console.log('[OCR] checking Vision credentials...');
+      const { getVisionClient } = require('../config/vision');
+      getVisionClient(); // throws immediately if not configured
+      console.log('[OCR] credentials OK');
+    } catch (credErr) {
+      console.warn('[OCR] credentials check failed:', credErr.message);
+      return res.status(503).json({ error: credErr.message });
+    }
+
+    // ── Check file exists ────────────────────────────────────────────────────
+    const fs = require('fs');
+    if (!fs.existsSync(doc.filePath)) {
+      console.error('[OCR] file not found on disk:', doc.filePath);
+      return res.status(404).json({ error: `Fichier introuvable sur le serveur : ${doc.filePath}` });
+    }
+
+    // ── Run OCR ──────────────────────────────────────────────────────────────
     doc.status = 'processing';
     doc.errorLog = null;
     doc.updatedAt = new Date();
     await doc.save();
+    console.log('[OCR] status → processing, running Vision API...');
 
     try {
       const { rawResponse, fullText, confidence, pages } = await runOcr(
         doc.filePath,
         doc.mimeType
       );
+      console.log('[OCR] Vision API success, confidence=', confidence);
       doc.visionResponse = rawResponse;
       doc.fullText = fullText;
       doc.confidence = confidence;
@@ -108,6 +130,7 @@ router.post('/process/:id', async (req, res, next) => {
       await doc.save();
       return res.json({ id: doc._id.toString(), status: 'processed' });
     } catch (ocrErr) {
+      console.error('[OCR] Vision API error:', ocrErr.message, '| code:', ocrErr.code);
       doc.status = 'failed';
       doc.errorLog = {
         message: ocrErr.message || 'OCR failed',
@@ -120,9 +143,7 @@ router.post('/process/:id', async (req, res, next) => {
         : ocrErr.code === 429 ? 429
         : ocrErr.code === 8 ? 503
         : 502;
-      return res.status(status).json({
-        error: ocrErr.message || 'OCR processing failed',
-      });
+      return res.status(status).json({ error: ocrErr.message || 'OCR processing failed' });
     }
   } catch (err) {
     next(err);
