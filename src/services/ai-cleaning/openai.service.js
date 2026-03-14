@@ -13,9 +13,7 @@ function getClient() {
 }
 
 /**
- * Parse AI response: handle optional markdown code block.
- * @param {string} content
- * @returns {object}
+ * Parse AI response: strip optional markdown code block wrapper.
  */
 function parseJsonResponse(content) {
   if (!content || typeof content !== 'string') {
@@ -28,66 +26,96 @@ function parseJsonResponse(content) {
 }
 
 /**
- * Validate that the parsed object has the expected shape.
- * @param {object} obj
- * @returns {{ valid: boolean, errors: string[] }}
+ * Validate the expected shape of the AI response.
  */
 function validateAiResponseShape(obj) {
   const errors = [];
-  if (!obj || typeof obj !== 'object') {
-    return { valid: false, errors: ['Response is not an object'] };
-  }
-  if (typeof obj.cleaned_data !== 'object' || obj.cleaned_data === null) {
-    errors.push('cleaned_data must be an object');
-  }
-  if (!Array.isArray(obj.detected_fields)) {
-    errors.push('detected_fields must be an array');
-  }
-  if (!Array.isArray(obj.errors)) {
-    errors.push('errors must be an array');
-  }
+  if (!obj || typeof obj !== 'object') return { valid: false, errors: ['Response is not an object'] };
+  if (typeof obj.cleaned_data !== 'object' || obj.cleaned_data === null) errors.push('cleaned_data must be an object');
+  if (!Array.isArray(obj.detected_fields)) errors.push('detected_fields must be an array');
+  if (!Array.isArray(obj.errors)) errors.push('errors must be an array');
   const conf = obj.confidence;
-  if (typeof conf !== 'number' || conf < 0 || conf > 1) {
-    errors.push('confidence must be a number between 0 and 1');
-  }
+  if (typeof conf !== 'number' || conf < 0 || conf > 1) errors.push('confidence must be a number between 0 and 1');
   if (!obj.schema_proposal || typeof obj.schema_proposal !== 'object') {
     errors.push('schema_proposal must be an object');
   } else {
-    if (typeof obj.schema_proposal.table_name !== 'string') {
-      errors.push('schema_proposal.table_name must be a string');
-    }
-    if (!Array.isArray(obj.schema_proposal.fields)) {
-      errors.push('schema_proposal.fields must be an array');
-    }
+    if (typeof obj.schema_proposal.table_name !== 'string') errors.push('schema_proposal.table_name must be a string');
+    if (!Array.isArray(obj.schema_proposal.fields)) errors.push('schema_proposal.fields must be an array');
   }
-  return {
-    valid: errors.length === 0,
-    errors,
-  };
+  return { valid: errors.length === 0, errors };
+}
+
+/**
+ * Build the message content for OpenAI.
+ * If imageData is provided, sends image + text (GPT-4o vision).
+ * Otherwise, sends text only.
+ *
+ * @param {string} prompt
+ * @param {{ base64: string, mimeType: string } | null} imageData
+ * @returns {Array} messages[].content
+ */
+function buildUserContent(prompt, imageData) {
+  if (!imageData) {
+    // Text-only mode (PDF or image read failed)
+    return prompt;
+  }
+
+  // Vision mode: image first, then the text prompt
+  return [
+    {
+      type: 'image_url',
+      image_url: {
+        url: `data:${imageData.mimeType};base64,${imageData.base64}`,
+        detail: 'high', // high = better for handwriting, fine details
+      },
+    },
+    {
+      type: 'text',
+      text: prompt,
+    },
+  ];
 }
 
 /**
  * Call OpenAI and return structured result.
- * @param {string} preparedText
- * @param {object} options - { documentType, country, language }
- * @returns {Promise<{ cleaned_data, detected_fields, errors, confidence, schema_proposal }>}
+ * Uses GPT-4o with vision when an image is available, GPT-4o-mini for text-only.
+ *
+ * @param {string} preparedText - Preprocessed OCR text
+ * @param {object} options - { documentType, country, language, imageData }
  */
 async function runCleaning(preparedText, options = {}) {
   const client = getClient();
+
   const prompt = buildPrompt({
     text: preparedText,
-    documentType: options.documentType || 'unknown',
+    documentType: options.documentType || 'school',
     country: options.country || 'DRC',
     language: options.language || 'French',
   });
 
+  const hasImage = !!options.imageData;
+
+  // Use gpt-4o for vision (image), gpt-4o-mini for text-only
+  const model = hasImage
+    ? 'gpt-4o'
+    : (config.OPENAI_MODEL || 'gpt-4o-mini');
+
+  const systemPrompt = hasImage
+    ? 'You are an expert at reading DRC school bulletin documents. You have been given the document image AND the OCR text. Use BOTH to extract accurate data — prefer what you see in the image for handwritten values where OCR may be wrong. Return only valid JSON.'
+    : 'You are an expert at reading DRC school bulletin documents. Return only valid JSON. No markdown, no explanation.';
+
+  const userContent = buildUserContent(prompt, options.imageData || null);
+
+  console.log(`[AI] Calling OpenAI model=${model}, vision=${hasImage}`);
+
   const response = await client.chat.completions.create({
-    model: config.OPENAI_MODEL || 'gpt-4o-mini',
+    model,
     messages: [
-      { role: 'system', content: 'You return only valid JSON. No markdown, no explanation.' },
-      { role: 'user', content: prompt },
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userContent },
     ],
-    temperature: 0.2,
+    temperature: 0.1, // Low temperature for precise, consistent extraction
+    max_tokens: 4096,
   });
 
   const content = response.choices?.[0]?.message?.content;
@@ -102,7 +130,7 @@ async function runCleaning(preparedText, options = {}) {
     detected_fields: parsed.detected_fields || [],
     errors: parsed.errors || [],
     confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0,
-    schema_proposal: parsed.schema_proposal || { table_name: 'documents', fields: [] },
+    schema_proposal: parsed.schema_proposal || { table_name: 'bulletin_scolaire', fields: [] },
   };
 }
 

@@ -1,3 +1,5 @@
+const fs = require('fs').promises;
+const path = require('path');
 const OcrDocument = require('../../models/OcrDocument');
 const RawDocument = require('../../models/RawDocument');
 const CleanedDocument = require('../../models/CleanedDocument');
@@ -6,17 +8,35 @@ const { preprocess } = require('./preprocess');
 const { runCleaning } = require('./openai.service');
 const { postValidate } = require('./postValidate');
 
-const DOCUMENT_TYPES = ['school', 'health', 'admin', 'unknown'];
 const CONFIDENCE_THRESHOLD = config.AI_CLEANING_CONFIDENCE_THRESHOLD ?? 0.8;
+
+// MIME types that can be sent as images to OpenAI Vision
+const VISION_IMAGE_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif'];
+
+/**
+ * Try to load the document file as a base64 image for OpenAI vision.
+ * Only supports image MIME types (not PDF — GPT doesn't accept PDF directly).
+ * @param {string} filePath
+ * @param {string} mimeType
+ * @returns {Promise<{ base64: string, mimeType: string } | null>}
+ */
+async function loadImageForVision(filePath, mimeType) {
+  if (!filePath || !VISION_IMAGE_TYPES.includes(mimeType)) return null;
+  try {
+    const buffer = await fs.readFile(filePath);
+    return { base64: buffer.toString('base64'), mimeType };
+  } catch (e) {
+    console.warn('[AI] Could not read image for vision input:', e.message);
+    return null;
+  }
+}
 
 /**
  * Build raw_ocr from OcrDocument.
- * @param {object} ocrDoc
- * @returns {{ text: string, blocks: Array, metadata: object }}
  */
 function buildRawOcrFromOcrDocument(ocrDoc) {
   const text = ocrDoc.fullText || '';
-  const blocks = ocrDoc.pages || (ocrDoc.visionResponse && ocrDoc.visionResponse.fullTextAnnotation?.pages) || [];
+  const blocks = ocrDoc.pages || [];
   const metadata = {
     fileName: ocrDoc.fileName,
     schoolId: ocrDoc.schoolId,
@@ -27,10 +47,9 @@ function buildRawOcrFromOcrDocument(ocrDoc) {
 }
 
 /**
- * Run full AI cleaning pipeline: read OCR -> raw -> preprocess -> OpenAI -> post-validate -> save.
- * @param {string} ocrDocumentId - OcrDocument._id
+ * Run full AI cleaning pipeline: OCR text + optional image → OpenAI → post-validate → save.
+ * @param {string} ocrDocumentId
  * @param {object} options - { documentType, country, language }
- * @returns {Promise<{ cleanedDocumentId: string, status: string, confidence: number }>}
  */
 async function runAICleaning(ocrDocumentId, options = {}) {
   const ocrDoc = await OcrDocument.findById(ocrDocumentId);
@@ -45,15 +64,11 @@ async function runAICleaning(ocrDocumentId, options = {}) {
     throw err;
   }
 
-  const documentType = DOCUMENT_TYPES.includes(options.documentType)
-    ? options.documentType
-    : 'unknown';
-
   const rawOcr = buildRawOcrFromOcrDocument(ocrDoc);
   const rawDoc = new RawDocument({
     sourceOcrId: ocrDocumentId,
     raw_ocr: rawOcr,
-    document_type: documentType,
+    document_type: 'school',
     upload_date: ocrDoc.createdAt || new Date(),
     status: 'cleaning',
   });
@@ -62,10 +77,21 @@ async function runAICleaning(ocrDocumentId, options = {}) {
   let cleanedDoc;
   try {
     const preparedText = preprocess(rawOcr.text);
+
+    // Attempt to load the original file as image for OpenAI vision
+    const imageData = await loadImageForVision(ocrDoc.filePath, ocrDoc.mimeType);
+
+    if (imageData) {
+      console.log(`[AI] Vision mode: sending image (${ocrDoc.mimeType}) + OCR text to GPT-4o`);
+    } else {
+      console.log(`[AI] Text-only mode: sending OCR text to GPT-4o (${ocrDoc.mimeType})`);
+    }
+
     const aiResult = await runCleaning(preparedText, {
-      documentType,
+      documentType: 'school',
       country: options.country || 'DRC',
       language: options.language || 'French',
+      imageData, // null for PDFs, base64 object for images
     });
 
     const { valid: postValid, errors: postErrors } = postValidate(
@@ -75,11 +101,8 @@ async function runAICleaning(ocrDocumentId, options = {}) {
     const allErrors = [...(aiResult.errors || []), ...postErrors];
 
     let status = 'validated';
-    if (!postValid || allErrors.length > 0) {
-      status = 'needs_review';
-    } else if (aiResult.confidence < CONFIDENCE_THRESHOLD) {
-      status = 'needs_review';
-    }
+    if (!postValid || allErrors.length > 0) status = 'needs_review';
+    if (aiResult.confidence < CONFIDENCE_THRESHOLD) status = 'needs_review';
     if (!postValid && postErrors.some((e) => e.startsWith('invalid_') || e.startsWith('future_'))) {
       status = 'rejected';
     }
