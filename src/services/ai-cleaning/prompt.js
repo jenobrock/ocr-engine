@@ -1,147 +1,156 @@
 /**
- * Build the specialized prompt for school bulletin (bulletin scolaire) documents.
- * @param {object} opts - { text, documentType, country, language }
+ * Specialized prompt for DRC school bulletin (bulletin scolaire) extraction.
+ * Handles mixed printed labels + handwritten values.
+ * @param {object} opts - { text, country, language }
  * @returns {string}
  */
 function buildPrompt(opts) {
-  const {
-    text = '',
-    country = 'DRC',
-    language = 'French',
-  } = opts;
-
+  const { text = '' } = opts;
   const hasText = text && text.trim().length > 10;
 
-  return `You are an expert AI specialized in extracting structured data from African school report cards (bulletins scolaires).
+  return `You are an expert AI specialized in reading DRC (Democratic Republic of Congo) school report cards (bulletins scolaires).
 
-Country: ${country}
-Language: ${language}
-Document type: bulletin_scolaire (school report card)
+These documents contain MIXED content:
+- PRINTED labels (e.g. "PROVINCE:", "ÉLÈVE:", "N° PERM:")
+- HANDWRITTEN values filled in by school staff (names, numbers, dates)
 
-${hasText ? `OCR Text extracted from the document:
-"""
-${text}
-"""` : `[DOCUMENT EMPTY — OCR produced no readable text. Return best-effort result with confidence: 0.05]`}
+OCR of handwritten text often contains errors. You MUST:
+- Correct obvious OCR errors in handwritten words (e.g. "Nord-Kivu" → correct if garbled)
+- Recognize partial words and reconstruct them
+- Handle mixed case, accent errors, and spacing issues
 
-─── YOUR TASK ───────────────────────────────────────────────────────────────
+${hasText
+  ? `Raw OCR text from the document:\n"""\n${text}\n"""`
+  : `[EMPTY — OCR could not read the document. Return nulls with confidence: 0.02]`}
 
-Extract ALL of the following fields. If a field is not found, set it to null (never omit it).
+════════════════════════════════════════════════════════
+PHASE 1 — HEADER EXTRACTION (top priority)
+════════════════════════════════════════════════════════
 
-STUDENT INFO:
-- nom_eleve          → Last name of the student
-- prenom_eleve       → First name(s) of the student
-- genre              → "M" or "F" (if detectable)
-- date_naissance     → Date of birth ISO format YYYY-MM-DD (if present)
-- matricule          → Student ID / registration number (if present)
+The bulletin header always contains these fields as printed labels followed by handwritten values.
+Extract them precisely:
 
-SCHOOL INFO:
-- etablissement      → School name
-- province           → Province or region
-- ville              → City
-- code_etablissement → School code (if present)
-- directeur          → School director's name (if present)
+┌─────────────────────────────────────────────────────────────┐
+│  PROVINCE:        _______________ (handwritten)             │
+│  VILLE:           _______________ (handwritten)             │
+│  COMMUNE:         _______________ (handwritten)             │
+│  ÉCOLE:           _______________ (handwritten)             │
+│  ÉLÈVE:           _______________ (handwritten — FULL NAME) │
+│  SEXE:            ___ (M or F, handwritten)                 │
+│  NÉ(E) À:         _______________ (place of birth, HW)      │
+│  LE:              _______________ (date of birth, HW)       │
+│  CLASSE:          _______________ (handwritten)             │
+│  N° PERM:         _______________ (permanent number, HW)    │
+└─────────────────────────────────────────────────────────────┘
 
-ACADEMIC CONTEXT:
-- annee_scolaire     → Academic year, e.g. "2023-2024"
-- classe             → Class/grade, e.g. "6ème A", "3ème Scientifique"
-- section            → Section/track, e.g. "Littéraire", "Scientifique", "Pédagogique"
-- trimestre          → "1er trimestre", "2ème trimestre", "3ème trimestre", or "Annuel"
+Field extraction rules:
+- "province"      → text after label "PROVINCE" or "PROV"
+- "ville"         → text after label "VILLE" or "CITY"
+- "commune"       → text after label "COMMUNE"
+- "etablissement" → text after label "ÉCOLE", "ECOLE", "ETABLISSEMENT", or school name
+- "nom_eleve"     → FULL NAME after label "ÉLÈVE", "ELEVE", "NOM" — keep exactly as written
+- "sexe"          → "M" or "F" after label "SEXE", "S" (normalize: "Masculin"→"M", "Féminin"→"F")
+- "lieu_naissance"→ city after "NÉ(E) À", "NE A", "LIEU DE NAISSANCE"
+- "date_naissance"→ date after "LE", "DATE DE NAISSANCE" → normalize to YYYY-MM-DD if possible
+- "classe"        → value after "CLASSE", e.g. "6ème A", "3ème B", "4ème Scientifique"
+- "numero_perm"   → long number after "N° PERM", "NUPERM", "N PERM", "NO PERM", "#PERM"
 
-GRADES (matieres):
-- matieres           → JSON array of subject objects. Each subject:
-  {
-    "nom": "Mathématiques",
-    "note": 14,           ← grade obtained (number, or null)
-    "max": 20,            ← maximum possible (default 20 if not shown)
-    "coeff": 2,           ← coefficient/weight (number, or null)
-    "points": 28          ← note × coeff (compute if not given)
-  }
-  Include ALL subjects found in the bulletin.
+HANDWRITING TIPS:
+- "0" and "O" are often confused in names and numbers
+- "l" and "1" are often confused in N° PERM
+- Accents (é, è, ê) may be missing or garbled — apply them to French words
+- Names may be in ALL CAPS (OCR artifacts) — normalize to Title Case
+- N° PERM is typically 10–20 digits, may have spaces or dashes
 
-SUMMARY:
-- total_points       → Sum of all weighted points (number)
-- total_max          → Maximum possible weighted total (number)
-- pourcentage        → Percentage score (total_points / total_max × 100), rounded to 2 decimals
-- moyenne            → Average grade (total_points / total_max × max_grade), e.g. out of 20
-- rang               → Class rank, e.g. "3ème" or 3
-- effectif_classe    → Number of students in class (if present)
-- mention            → Honor mention: "Très bien", "Bien", "Assez bien", "Passable", "Échec", or null
+════════════════════════════════════════════════════════
+PHASE 2 — GRADES TABLE EXTRACTION
+════════════════════════════════════════════════════════
 
-METADATA:
-- date_bulletin      → Date the bulletin was issued (ISO format or as written)
-- observations       → Any teacher/director observations or comments (string or null)
+After the header, the bulletin contains a table of subjects and grades.
+Extract all subjects as an array:
 
-─── OUTPUT FORMAT ───────────────────────────────────────────────────────────
+- "matieres" → array of: { "nom": string, "note": number|null, "max": number, "coeff": number|null, "points": number|null }
+  - "max" defaults to 20 if not shown
+  - Compute "points" = note × coeff if not given
+  - Include ALL subjects, even if note is illegible (set note: null)
 
-Return ONLY a single valid JSON object with EXACTLY these keys:
+Summary fields (usually at the bottom of the table):
+- "annee_scolaire"  → e.g. "2023-2024" (printed or handwritten)
+- "trimestre"       → "1er trimestre", "2ème trimestre", "3ème trimestre", or "Annuel"
+- "total_points"    → sum of all weighted points
+- "total_max"       → maximum possible weighted total
+- "pourcentage"     → total_points / total_max × 100, round to 2 decimals
+- "moyenne"         → average out of 20
+- "rang"            → class rank (string like "3ème" or number)
+- "effectif_classe" → number of students in class
+- "mention"         → "Très bien" | "Bien" | "Assez bien" | "Passable" | "Échec"
+- "directeur"       → director name (usually at bottom with signature)
+- "observations"    → any comments
+
+════════════════════════════════════════════════════════
+OUTPUT
+════════════════════════════════════════════════════════
+
+Return ONLY one valid JSON object. ALL keys must be present (null if not found):
 
 {
   "cleaned_data": {
-    "nom_eleve": ...,
-    "prenom_eleve": ...,
-    "genre": ...,
-    "date_naissance": ...,
-    "matricule": ...,
-    "etablissement": ...,
-    "province": ...,
-    "ville": ...,
-    "code_etablissement": ...,
-    "directeur": ...,
-    "annee_scolaire": ...,
-    "classe": ...,
-    "section": ...,
-    "trimestre": ...,
-    "matieres": [...],
-    "total_points": ...,
-    "total_max": ...,
-    "pourcentage": ...,
-    "moyenne": ...,
-    "rang": ...,
-    "effectif_classe": ...,
-    "mention": ...,
-    "date_bulletin": ...,
-    "observations": ...
+    "province":        string | null,
+    "ville":           string | null,
+    "commune":         string | null,
+    "etablissement":   string | null,
+    "nom_eleve":       string | null,
+    "sexe":            "M" | "F" | null,
+    "lieu_naissance":  string | null,
+    "date_naissance":  string | null,
+    "classe":          string | null,
+    "numero_perm":     string | null,
+    "annee_scolaire":  string | null,
+    "trimestre":       string | null,
+    "matieres":        [],
+    "total_points":    number | null,
+    "total_max":       number | null,
+    "pourcentage":     number | null,
+    "moyenne":         number | null,
+    "rang":            string | null,
+    "effectif_classe": number | null,
+    "mention":         string | null,
+    "directeur":       string | null,
+    "observations":    string | null
   },
-  "detected_fields": [/* list of field names that were actually found (non-null) */],
-  "errors": [/* any issues found, e.g. "note_illisible_mathematiques", "rang_absent" */],
-  "confidence": /* 0.0–1.0 based on how much text was readable and how many fields found */,
+  "detected_fields": [ /* names of non-null fields */ ],
+  "errors": [ /* e.g. "numero_perm_illisible", "note_illisible_mathematiques" */ ],
+  "confidence": /* 0.0–1.0. Count non-null fields / 22, weight header fields more */ ,
   "schema_proposal": {
     "table_name": "bulletin_scolaire",
     "fields": [
-      { "name": "nom_eleve", "type": "string", "required": true },
-      { "name": "prenom_eleve", "type": "string", "required": true },
-      { "name": "genre", "type": "string", "required": false },
-      { "name": "date_naissance", "type": "date", "required": false },
-      { "name": "matricule", "type": "string", "required": false },
-      { "name": "etablissement", "type": "string", "required": true },
-      { "name": "province", "type": "string", "required": false },
-      { "name": "ville", "type": "string", "required": false },
-      { "name": "code_etablissement", "type": "string", "required": false },
-      { "name": "directeur", "type": "string", "required": false },
-      { "name": "annee_scolaire", "type": "string", "required": true },
-      { "name": "classe", "type": "string", "required": true },
-      { "name": "section", "type": "string", "required": false },
-      { "name": "trimestre", "type": "string", "required": true },
-      { "name": "matieres", "type": "json", "required": true },
-      { "name": "total_points", "type": "number", "required": false },
-      { "name": "total_max", "type": "number", "required": false },
-      { "name": "pourcentage", "type": "number", "required": false },
-      { "name": "moyenne", "type": "number", "required": false },
-      { "name": "rang", "type": "string", "required": false },
-      { "name": "effectif_classe", "type": "number", "required": false },
-      { "name": "mention", "type": "string", "required": false },
-      { "name": "date_bulletin", "type": "date", "required": false },
-      { "name": "observations", "type": "string", "required": false }
+      { "name": "province",        "type": "string",  "required": false },
+      { "name": "ville",           "type": "string",  "required": false },
+      { "name": "commune",         "type": "string",  "required": false },
+      { "name": "etablissement",   "type": "string",  "required": true  },
+      { "name": "nom_eleve",       "type": "string",  "required": true  },
+      { "name": "sexe",            "type": "string",  "required": false },
+      { "name": "lieu_naissance",  "type": "string",  "required": false },
+      { "name": "date_naissance",  "type": "date",    "required": false },
+      { "name": "classe",          "type": "string",  "required": true  },
+      { "name": "numero_perm",     "type": "string",  "required": false },
+      { "name": "annee_scolaire",  "type": "string",  "required": true  },
+      { "name": "trimestre",       "type": "string",  "required": true  },
+      { "name": "matieres",        "type": "json",    "required": true  },
+      { "name": "total_points",    "type": "number",  "required": false },
+      { "name": "total_max",       "type": "number",  "required": false },
+      { "name": "pourcentage",     "type": "number",  "required": false },
+      { "name": "moyenne",         "type": "number",  "required": false },
+      { "name": "rang",            "type": "string",  "required": false },
+      { "name": "effectif_classe", "type": "number",  "required": false },
+      { "name": "mention",         "type": "string",  "required": false },
+      { "name": "directeur",       "type": "string",  "required": false },
+      { "name": "observations",    "type": "string",  "required": false }
     ]
   }
 }
 
-CRITICAL RULES:
-- table_name MUST always be "bulletin_scolaire"
-- ALL 24 keys in cleaned_data must be present (set to null if not found)
-- matieres MUST be an array (empty array [] if no grades found)
-- confidence: count non-null fields / 24, multiply by readability factor
-- Return ONLY the JSON. No markdown, no backtick, no explanation.`;
+CRITICAL: table_name MUST be "bulletin_scolaire". Return ONLY JSON, no markdown, no backticks.`;
 }
 
 module.exports = { buildPrompt };

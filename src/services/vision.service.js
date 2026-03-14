@@ -51,8 +51,14 @@ function extractPagesData(pages) {
 /**
  * Run OCR on an image file (JPG, PNG, TIFF single-page, WebP).
  */
+// Language hints: French + DRC locale improves handwritten word recognition
+const LANGUAGE_HINTS = ['fr', 'fr-CD'];
+
 async function runOcrImage(client, buffer) {
-  const [result] = await client.documentTextDetection({ image: { content: buffer } });
+  const [result] = await client.documentTextDetection({
+    image: { content: buffer },
+    imageContext: { languageHints: LANGUAGE_HINTS },
+  });
 
   const fta = result?.fullTextAnnotation;
   if (!fta) return { fullText: '', pages: [], confidence: 0 };
@@ -75,10 +81,10 @@ async function runOcrPdf(client, buffer, mimeType) {
     requests: [{
       inputConfig: {
         content: buffer,
-        mimeType: mimeType, // 'application/pdf' or 'image/tiff'
+        mimeType: mimeType,
       },
       features: [{ type: 'DOCUMENT_TEXT_DETECTION' }],
-      // Vision API sync limit: up to 5 pages per request
+      imageContext: { languageHints: LANGUAGE_HINTS },
       pages: [1, 2, 3, 4, 5],
     }],
   });

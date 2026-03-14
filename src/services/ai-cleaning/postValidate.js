@@ -16,18 +16,43 @@ function postValidate(cleaned_data, schema_proposal = {}) {
   // ── Bulletin scolaire specific rules ────────────────────────────────────────
   if (tableName === 'bulletin_scolaire') {
 
-    // Required identity fields
-    if (!cleaned_data.nom_eleve && !cleaned_data.prenom_eleve) {
+    // ── Header fields ─────────────────────────────────────────────────────────
+    if (!cleaned_data.nom_eleve) {
       errors.push('missing_student_name');
     }
     if (!cleaned_data.etablissement) {
       errors.push('missing_school_name');
     }
-    if (!cleaned_data.annee_scolaire) {
-      errors.push('missing_academic_year');
-    }
     if (!cleaned_data.classe) {
       errors.push('missing_class');
+    }
+
+    // N° PERM: must be numeric-ish (digits, spaces, dashes allowed)
+    if (cleaned_data.numero_perm) {
+      const perm = String(cleaned_data.numero_perm).replace(/[\s\-]/g, '');
+      if (!/^\d{6,25}$/.test(perm)) {
+        errors.push('numero_perm_format_invalide');
+      }
+    }
+
+    // Sexe
+    if (cleaned_data.sexe !== null && cleaned_data.sexe !== undefined) {
+      const s = String(cleaned_data.sexe).trim().toUpperCase();
+      if (s !== 'M' && s !== 'F') {
+        errors.push('sexe_invalide');
+      }
+    }
+
+    // Date de naissance
+    if (cleaned_data.date_naissance) {
+      const d = parseDate(cleaned_data.date_naissance);
+      const today = new Date();
+      if (d && d > today) errors.push('future_date_naissance');
+    }
+
+    // Academic year
+    if (!cleaned_data.annee_scolaire) {
+      errors.push('missing_academic_year');
     }
 
     // Academic year format (e.g. "2023-2024")
@@ -94,20 +119,6 @@ function postValidate(cleaned_data, schema_proposal = {}) {
       }
     }
 
-    // Genre
-    if (cleaned_data.genre !== null && cleaned_data.genre !== undefined) {
-      const g = String(cleaned_data.genre).trim().toUpperCase();
-      if (g !== 'M' && g !== 'F') {
-        errors.push('invalid_genre_value');
-      }
-    }
-
-    // Date de naissance: student can't be born in the future
-    if (cleaned_data.date_naissance) {
-      const d = parseDate(cleaned_data.date_naissance);
-      const today = new Date();
-      if (d && d > today) errors.push('future_date_naissance');
-    }
 
     // Mention consistency with moyenne
     if (cleaned_data.mention && cleaned_data.pourcentage !== null && cleaned_data.pourcentage !== undefined) {
