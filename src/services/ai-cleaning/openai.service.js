@@ -4,7 +4,10 @@ const { buildPrompt } = require('./prompt');
 
 function getClient() {
   if (!config.OPENAI_API_KEY) {
-    throw new Error('OPENAI_API_KEY is not configured');
+    const err = new Error('Clé OpenAI non configurée. Ajoutez OPENAI_API_KEY dans le fichier .env du serveur.');
+    err.code = 'OPENAI_NOT_CONFIGURED';
+    err.statusCode = 503;
+    throw err;
   }
   return new OpenAI({ apiKey: config.OPENAI_API_KEY });
 }

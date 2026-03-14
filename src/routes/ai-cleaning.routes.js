@@ -43,11 +43,10 @@ router.post('/process/:ocrDocumentId', async (req, res, next) => {
     const result = await runAICleaning(ocrDocumentId, options);
     res.json(result);
   } catch (err) {
-    if (err.statusCode === 404) {
-      return res.status(404).json({ error: err.message });
-    }
-    if (err.statusCode === 400) {
-      return res.status(400).json({ error: err.message });
+    if (err.statusCode === 404) return res.status(404).json({ error: err.message });
+    if (err.statusCode === 400) return res.status(400).json({ error: err.message });
+    if (err.statusCode === 503 || err.code === 'OPENAI_NOT_CONFIGURED') {
+      return res.status(503).json({ error: err.message });
     }
     next(err);
   }
