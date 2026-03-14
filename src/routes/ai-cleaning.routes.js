@@ -130,4 +130,42 @@ router.get('/list', async (req, res, next) => {
   }
 });
 
+/**
+ * @openapi
+ * /api/ai-cleaning/{id}/validate:
+ *   patch:
+ *     summary: Validate a cleaned document schema and mark as validated
+ *     parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               tableName: { type: string }
+ */
+router.patch('/:id/validate', async (req, res, next) => {
+  try {
+    const id = req.params.id;
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(404).json({ error: 'Cleaned document not found' });
+    }
+    const doc = await CleanedDocument.findById(id);
+    if (!doc) return res.status(404).json({ error: 'Cleaned document not found' });
+
+    doc.status = 'validated';
+    doc.validated_at = new Date();
+
+    // Allow overriding the table name during validation
+    if (req.body.tableName && doc.schema) {
+      doc.schema = { ...doc.schema.toObject?.() ?? doc.schema, table_name: req.body.tableName };
+    }
+
+    await doc.save();
+    res.json({ id: doc._id.toString(), status: doc.status, validated_at: doc.validated_at });
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;
