@@ -81,14 +81,15 @@ router.post('/process/:id', async (req, res, next) => {
     if (!doc) {
       return res.status(404).json({ error: 'Document not found' });
     }
-    if (doc.status === 'processed') {
-      return res.status(409).json({ error: 'Document already processed' });
-    }
     if (doc.status === 'processing') {
       return res.status(409).json({ error: 'OCR already in progress' });
     }
+    if (doc.status === 'processed') {
+      return res.status(409).json({ error: 'Document already processed' });
+    }
 
     doc.status = 'processing';
+    doc.errorLog = null;
     doc.updatedAt = new Date();
     await doc.save();
 
