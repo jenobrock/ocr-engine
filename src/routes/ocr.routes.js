@@ -85,7 +85,8 @@ router.post('/process/:id', async (req, res, next) => {
     if (doc.status === 'processing') {
       return res.status(409).json({ error: 'OCR already in progress' });
     }
-    if (doc.status === 'processed') {
+    const force = req.query.force === 'true';
+    if (doc.status === 'processed' && !force) {
       return res.status(409).json({ error: 'Document already processed' });
     }
 
