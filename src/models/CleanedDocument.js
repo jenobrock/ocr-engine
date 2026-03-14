@@ -9,9 +9,9 @@ const cleanedDocumentSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.Mixed,
       default: null,
     },
-    detected_fields: { type: [String], default: [] },
-    validation_errors: { type: [String], default: [] },
-    ai_errors: { type: [String], default: [] },
+    detected_fields:  { type: Array, default: () => [] },
+    validation_errors: { type: Array, default: () => [] },
+    ai_errors:         { type: Array, default: () => [] },
     confidence: { type: Number, default: null },
     status: {
       type: String,

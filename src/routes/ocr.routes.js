@@ -139,11 +139,20 @@ router.post('/process/:id', async (req, res, next) => {
       };
       doc.updatedAt = new Date();
       await doc.save();
+      // gRPC code 7 = PERMISSION_DENIED (billing not enabled)
+      // gRPC code 8 = RESOURCE_EXHAUSTED (quota)
+      // gRPC code 16 = UNAUTHENTICATED
       const status = ocrErr.code === 'VISION_NOT_CONFIGURED' ? 503
-        : ocrErr.code === 429 ? 429
-        : ocrErr.code === 8 ? 503
+        : ocrErr.code === 7  ? 503   // billing not enabled
+        : ocrErr.code === 16 ? 503   // bad credentials
+        : ocrErr.code === 429 || ocrErr.code === 8 ? 429
         : 502;
-      return res.status(status).json({ error: ocrErr.message || 'OCR processing failed' });
+      const message = ocrErr.code === 7
+        ? 'La facturation Google Cloud n\'est pas activée sur ce projet. Activez-la sur console.cloud.google.com.'
+        : ocrErr.code === 16
+        ? 'Credentials Google Cloud invalides. Vérifiez le fichier de clé.'
+        : ocrErr.message || 'OCR processing failed';
+      return res.status(status).json({ error: message });
     }
   } catch (err) {
     next(err);
