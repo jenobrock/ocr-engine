@@ -1,14 +1,21 @@
-const { ImageAnnotatorClient } = require('@google-cloud/vision');
 const config = require('./index');
 
 let client = null;
 
 function getVisionClient() {
   if (!config.GOOGLE_APPLICATION_CREDENTIALS) {
-    console.warn('GOOGLE_APPLICATION_CREDENTIALS not set - Vision API will fail');
+    const err = new Error(
+      'Google Cloud Vision non configuré. Ajoutez GOOGLE_APPLICATION_CREDENTIALS dans votre .env'
+    );
+    err.code = 'VISION_NOT_CONFIGURED';
+    throw err;
   }
+
   if (!client) {
-    client = new ImageAnnotatorClient();
+    const { ImageAnnotatorClient } = require('@google-cloud/vision');
+    client = new ImageAnnotatorClient({
+      keyFilename: config.GOOGLE_APPLICATION_CREDENTIALS,
+    });
   }
   return client;
 }

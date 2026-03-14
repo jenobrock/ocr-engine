@@ -4,6 +4,14 @@ const { connectDB } = require('./src/config/database');
 
 const PORT = process.env.PORT || 4000;
 
+// Prevent silent crashes — log and keep running
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err.message, err.stack);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandledRejection]', reason);
+});
+
 connectDB()
   .then(() => {
     app.listen(PORT, () => {

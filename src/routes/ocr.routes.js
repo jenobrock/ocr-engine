@@ -115,7 +115,10 @@ router.post('/process/:id', async (req, res, next) => {
       };
       doc.updatedAt = new Date();
       await doc.save();
-      const status = ocrErr.code === 429 ? 429 : (ocrErr.code === 8 ? 503 : 502);
+      const status = ocrErr.code === 'VISION_NOT_CONFIGURED' ? 503
+        : ocrErr.code === 429 ? 429
+        : ocrErr.code === 8 ? 503
+        : 502;
       return res.status(status).json({
         error: ocrErr.message || 'OCR processing failed',
       });
