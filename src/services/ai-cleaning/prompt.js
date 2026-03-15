@@ -66,19 +66,42 @@ HANDWRITING TIPS:
 PHASE 2 — GRADES TABLE EXTRACTION
 ════════════════════════════════════════════════════════
 
-After the header, the bulletin contains a table of subjects and grades.
-Extract all subjects as an array:
+The DRC bulletin uses a detailed per-period structure. Each subject has grades across:
+  1ère Période (1P) · 2ème Période (2P) · 3ème Période (3P) · 4ème Période (4P)
+  Examen 1er Semestre (ExS1) · Total 1er Semestre (TotS1)
+  Examen 2ème Semestre (ExS2) · Total 2ème Semestre (TotS2)
+  Total Général
 
-- "matieres" → array of: { "nom": string, "note": number|null, "max": number, "coeff": number|null, "points": number|null }
-  - "max" defaults to 20 if not shown
-  - Compute "points" = note × coeff if not given
-  - Include ALL subjects, even if note is illegible (set note: null)
+CRITICAL — "matieres" array rules:
+- Extract ONLY the subject name from the left column ("nom"). Do NOT include max values or notes from that column.
+- For each subject, fill in the 9 period/score columns below (null if not found or illegible):
 
-Summary fields (usually at the bottom of the table):
-- "annee_scolaire"  → e.g. "2023-2024" (printed or handwritten)
-- "trimestre"       → "1er trimestre", "2ème trimestre", "3ème trimestre", or "Annuel"
-- "total_points"    → sum of all weighted points
-- "total_max"       → maximum possible weighted total
+  { "nom": string,
+    "coeff": number | null,
+    "max_periode": number | null,   // max points per period (often 10 or 20)
+    "max_examen":  number | null,   // max points for each semester exam (often 30 or 50)
+    "max_total":   number | null,   // max total général for this subject
+    "periode_1":   number | null,   // 1ère Période / 1P
+    "periode_2":   number | null,   // 2ème Période / 2P
+    "periode_3":   number | null,   // 3ème Période / 3P
+    "periode_4":   number | null,   // 4ème Période / 4P
+    "examen_s1":   number | null,   // Examen 1er Semestre
+    "total_s1":    number | null,   // Total 1er Semestre
+    "examen_s2":   number | null,   // Examen 2ème Semestre
+    "total_s2":    number | null,   // Total 2ème Semestre
+    "total_general": number | null  // Total Général pour ce cours
+  }
+
+- Include ALL subjects even if all notes are null.
+- total_s1 = periode_1 + periode_2 + examen_s1 (compute if missing)
+- total_s2 = periode_3 + periode_4 + examen_s2 (compute if missing)
+- total_general = total_s1 + total_s2 (compute if missing)
+
+Summary fields (bottom of table):
+- "annee_scolaire"  → e.g. "2023-2024"
+- "semestre"        → "1er semestre" | "2ème semestre" | "Annuel" (replaces trimestre)
+- "total_points"    → sum of all subjects' total_general × coeff
+- "total_max"       → maximum possible total
 - "pourcentage"     → total_points / total_max × 100, round to 2 decimals
 - "moyenne"         → average out of 20
 - "rang"            → class rank (string like "3ème" or number)
@@ -106,8 +129,18 @@ Return ONLY one valid JSON object. ALL keys must be present (null if not found):
     "classe":          string | null,
     "numero_perm":     string | null,
     "annee_scolaire":  string | null,
-    "trimestre":       string | null,
-    "matieres":        [],
+    "semestre":        string | null,
+    "matieres": [
+      {
+        "nom": string, "coeff": number|null,
+        "max_periode": number|null, "max_examen": number|null, "max_total": number|null,
+        "periode_1": number|null, "periode_2": number|null,
+        "periode_3": number|null, "periode_4": number|null,
+        "examen_s1": number|null, "total_s1": number|null,
+        "examen_s2": number|null, "total_s2": number|null,
+        "total_general": number|null
+      }
+    ],
     "total_points":    number | null,
     "total_max":       number | null,
     "pourcentage":     number | null,
@@ -181,19 +214,19 @@ function buildZonePrompt(zoneTexts) {
       z.zone_eleve
     ),
     section(
-      'ZONE LISTE DES COURS — une matière par ligne (ligne 1 = 1ère matière, ligne 2 = 2ème…)',
+      'ZONE LISTE DES COURS — NOMS UNIQUEMENT, une matière par ligne (pas de maxima, pas de notes). Ligne 1 = matière 1, ligne 2 = matière 2…',
       z.zone_cours
     ),
     section(
-      'ZONE PÉRIODES / TRIMESTRES — colonnes de gauche à droite (colonne 1 = 1er trim., etc.)',
+      'ZONE PÉRIODES — en-têtes de colonnes de gauche à droite. Ordre attendu: 1ère Période, 2ème Période, 3ème Période, 4ème Période, Examen S1, Total S1, Examen S2, Total S2, Total Général',
       z.zone_periodes
     ),
     section(
-      'ZONE NOTES — matrice : ligne i = matière i de zone_cours, colonne j = période j de zone_periodes',
+      'ZONE NOTES — matrice des notes : ligne i = matière i de zone_cours, colonne j = période j de zone_periodes. Colonnes attendues: 1P, 2P, 3P, 4P, ExamS1, TotS1, ExamS2, TotS2, TotalGén',
       z.zone_notes
     ),
     section(
-      'ZONE TOTAUX (Total, Pourcentage, Rang, Mention, Effectif, Directeur)',
+      'ZONE TOTAUX (Total général, Pourcentage, Rang, Mention, Effectif, Directeur, Année scolaire, Semestre)',
       z.zone_total
     ),
   ].filter(Boolean).join('');
@@ -206,12 +239,16 @@ The document has been split into semantic zones by the user and each zone has be
 Use the zones to reconstruct the full bulletin data accurately.
 
 CRITICAL RULE FOR GRADES TABLE:
-- zone_cours lists subject NAMES, one per line (line 1 = subject 1, line 2 = subject 2…)
-- zone_periodes lists period/trimestre HEADERS left to right (col 1 = period 1, col 2 = period 2…)
-- zone_notes contains the GRADES as a matrix — row i corresponds to subject i from zone_cours,
-  column j corresponds to period j from zone_periodes.
-  Example: if zone_cours has "Maths" on line 1 and zone_periodes has "1er Trim." in col 1,
-  then zone_notes row 1 col 1 = Maths grade for 1er Trim.
+- zone_cours lists ONLY subject NAMES (no maxima, no totals) — line i = subject i
+- zone_periodes lists column HEADERS (do not include maxima row) — 9 expected columns:
+    1ère Période (1P) | 2ème Période (2P) | 3ème Période (3P) | 4ème Période (4P)
+    | Examen S1 | Total S1 | Examen S2 | Total S2 | Total Général
+- zone_notes is a matrix: row i = subject i from zone_cours, column j = period j from zone_periodes
+  Example: zone_cours line 1 = "Maths", zone_periodes col 1 = "1P" → zone_notes row 1 col 1 = Maths 1P grade
+- If fewer than 9 period columns are visible, map what is present and leave others null
+- total_s1 = periode_1 + periode_2 + examen_s1 (compute if not given)
+- total_s2 = periode_3 + periode_4 + examen_s2 (compute if not given)
+- total_general = total_s1 + total_s2 (compute if not given)
 
 ${hasContent
   ? `Document zones extracted by OCR:\n${zonesBlock}`
@@ -231,7 +268,7 @@ zone_administrative → province, ville, commune, etablissement
 zone_eleve          → nom_eleve, sexe, lieu_naissance, date_naissance, classe, numero_perm
 zone_cours + zone_periodes + zone_notes → matieres[] array (cross-reference the three zones)
 zone_total          → total_points, total_max, pourcentage, moyenne, rang, effectif_classe,
-                      mention, directeur, observations, annee_scolaire, trimestre
+                      mention, directeur, observations, annee_scolaire, semestre
 
 ════════════════════════════════════════════════════════
 OUTPUT
@@ -252,8 +289,18 @@ Return ONLY one valid JSON object. ALL keys must be present (null if not found):
     "classe":          string | null,
     "numero_perm":     string | null,
     "annee_scolaire":  string | null,
-    "trimestre":       string | null,
-    "matieres":        [{ "nom": string, "note": number|null, "max": number, "coeff": number|null, "points": number|null }],
+    "semestre":        string | null,
+    "matieres": [
+      {
+        "nom": string, "coeff": number|null,
+        "max_periode": number|null, "max_examen": number|null, "max_total": number|null,
+        "periode_1": number|null, "periode_2": number|null,
+        "periode_3": number|null, "periode_4": number|null,
+        "examen_s1": number|null, "total_s1": number|null,
+        "examen_s2": number|null, "total_s2": number|null,
+        "total_general": number|null
+      }
+    ],
     "total_points":    number | null,
     "total_max":       number | null,
     "pourcentage":     number | null,
@@ -281,7 +328,7 @@ Return ONLY one valid JSON object. ALL keys must be present (null if not found):
       { "name": "classe",          "type": "string",  "required": true  },
       { "name": "numero_perm",     "type": "string",  "required": false },
       { "name": "annee_scolaire",  "type": "string",  "required": true  },
-      { "name": "trimestre",       "type": "string",  "required": true  },
+      { "name": "semestre",        "type": "string",  "required": false },
       { "name": "matieres",        "type": "json",    "required": true  },
       { "name": "total_points",    "type": "number",  "required": false },
       { "name": "total_max",       "type": "number",  "required": false },
