@@ -72,12 +72,30 @@ The DRC bulletin uses a detailed per-period structure. Each subject has grades a
   Examen 2ème Semestre (ExS2) · Total 2ème Semestre (TotS2)
   Total Général
 
-CRITICAL — "matieres" array rules:
-- Extract ONLY the subject name from the left column ("nom"). Do NOT include anything else from that column.
-- THE NOTES ARE HANDWRITTEN — they are filled in by hand by teachers. Read carefully even if the writing is unclear. Common OCR confusions: 1↔l↔I, 0↔O↔6, 5↔S, 7↔1. Always produce a number, even an approximate one.
-- IGNORE any row labeled "MAXIMA", "MAX", "MAXIMUM" or similar — these are not subject rows.
-- IGNORE any row labeled "TAUX", "POURCENTAGE", "%" — these are summary rows, not subjects.
-- For each subject, fill in the 9 period/score columns below (null only if truly unreadable):
+CRITICAL — HOW TO READ THE GRADES GRID:
+
+The OCR output of a bulletin is a FLAT TEXT STREAM — the table grid lines are invisible.
+You must mentally reconstruct the matrix from the raw token sequence:
+
+1. Identify the subject list:  one name per line on the left column.
+   SKIP rows labeled "MAXIMA"/"MAX"/"MAXIMUM" and "TAUX"/"%".
+   Result → ordered list of N subjects.
+
+2. Identify the 9 column headers (left→right):
+   1P · 2P · 3P · 4P · ExS1 · TotS1 · ExS2 · TotS2 · TotGén
+
+3. Treat the grade values as an N×9 matrix.
+   The flat token sequence reads: subject1_col1, subject1_col2, …, subject1_col9,
+                                   subject2_col1, …, subject2_col9, etc.
+   Discard any token row that matches a MAXIMA row (a row of identical max values like 10/10/30/50)
+   or a TAUX row.
+
+4. THE NOTES ARE HANDWRITTEN — filled in by teachers.
+   Common OCR confusions: 1↔l↔I, 0↔O↔6, 5↔S, 7↔1.
+   Always interpret an ambiguous character in a number position as the closest digit.
+   Produce a number for every cell you can read, null only if truly unreadable.
+
+- For each subject, fill in the 9 columns (null only if truly unreadable):
 
   { "nom": string,
     "periode_1":   number | null,   // 1ère Période / 1P  (HANDWRITTEN)
@@ -232,21 +250,48 @@ function buildZonePrompt(zoneTexts) {
 The document has been split into semantic zones by the user and each zone has been OCR'd separately.
 Use the zones to reconstruct the full bulletin data accurately.
 
-CRITICAL RULE FOR GRADES TABLE:
-- zone_cours lists ONLY subject NAMES (no maxima, no totals) — line i = subject i
-  → SKIP any line labeled "MAXIMA", "MAX", "TAUX", "%" — these are NOT subjects
-- zone_periodes lists column HEADERS — 9 expected columns:
-    1ère Période (1P) | 2ème Période (2P) | 3ème Période (3P) | 4ème Période (4P)
-    | Examen S1 | Total S1 | Examen S2 | Total S2 | Total Général
-  → IGNORE any "MAXIMA" or "TAUX" row in zone_periodes
-- zone_notes is a matrix of HANDWRITTEN grades:
-    row i = subject i from zone_cours, column j = period j from zone_periodes
-  → IGNORE the MAXIMA row and TAUX row in zone_notes
-  → Notes are handwritten by teachers. Common confusions: 1↔l↔I, 0↔O↔6, 5↔S. Produce numbers.
-- If fewer than 9 period columns are visible, map what is present, leave others null
+════════════════════════════════════════════════════════
+HOW TO READ THE ZONES — MATRIX RECONSTRUCTION
+════════════════════════════════════════════════════════
+
+ZONE_COURS — plain list of subject names:
+  Each line is ONE subject name. Line 1 = subject 1, line 2 = subject 2, etc.
+  SKIP any line that is "MAXIMA", "MAX", "MAXIMUM", "TAUX", "%", or a number.
+  Result: ordered list → [ "Mathématiques", "Français", "Sciences", … ]
+
+ZONE_PERIODES — plain list of column headers (left to right):
+  Each token is ONE column label. Expected order:
+    1P | 2P | 3P | 4P | Exam S1 | Total S1 | Exam S2 | Total S2 | Total Gén.
+  SKIP any token that is a number (maxima row) or "TAUX/%".
+  Result: ordered list → [ "1P", "2P", "3P", "4P", "ExS1", "TotS1", "ExS2", "TotS2", "TotGén" ]
+
+ZONE_NOTES — this is the raw OCR output of a HANDWRITTEN GRID.
+  The OCR does NOT preserve table structure — it outputs a flat sequence of tokens.
+
+  HOW TO RECONSTRUCT THE MATRIX:
+  1. Split the raw text into individual tokens (numbers and occasional words).
+  2. DISCARD any token that belongs to the MAXIMA row or TAUX row
+     (a "MAXIMA row" is a row of printed max values — typically a row where all values are the same
+      round number like 10, 10, 30, 50, 50, 30, 50, 100 — appearing once in the grid).
+  3. The remaining tokens form an N×C matrix where:
+       N = number of subjects in zone_cours
+       C = number of period columns in zone_periodes (up to 9)
+  4. Read tokens left-to-right, top-to-bottom:
+       token 1..C  → row 1 (subject 1) → [ periode_1, periode_2, periode_3, periode_4, examen_s1, total_s1, examen_s2, total_s2, total_general ]
+       token C+1..2C → row 2 (subject 2) → same columns
+       … and so on.
+  5. If a cell is illegible or missing → null.
+
+  IMPORTANT — NOTES ARE HANDWRITTEN by teachers:
+    - Digits look like: 1↔l↔I, 0↔O↔6, 5↔S, 7↔1, 8↔6
+    - Always interpret ambiguous single characters as digits when in a number column
+    - A lone "l" next to digits is likely "1"; a lone "O" is likely "0"
+    - Produce a number for every cell you can read, even if approximate
+
 - total_s1 = periode_1 + periode_2 + examen_s1 (compute if not explicitly given)
 - total_s2 = periode_3 + periode_4 + examen_s2 (compute if not explicitly given)
 - total_general = total_s1 + total_s2 (compute if not explicitly given)
+- If fewer than 9 columns are present, map what exists and leave the rest null
 
 ${hasContent
   ? `Document zones extracted by OCR:\n${zonesBlock}`
