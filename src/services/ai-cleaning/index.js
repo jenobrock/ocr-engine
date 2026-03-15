@@ -92,6 +92,7 @@ async function runAICleaning(ocrDocumentId, options = {}) {
       country: options.country || 'DRC',
       language: options.language || 'French',
       imageData, // null for PDFs, base64 object for images
+      zoneTexts: options.zoneTexts || null, // zone-based extraction if provided
     });
 
     const { valid: postValid, errors: postErrors } = postValidate(

@@ -1,6 +1,6 @@
 const OpenAI = require('openai').default;
 const config = require('../../config');
-const { buildPrompt } = require('./prompt');
+const { buildPrompt, buildZonePrompt } = require('./prompt');
 
 function getClient() {
   if (!config.OPENAI_API_KEY) {
@@ -86,27 +86,34 @@ function buildUserContent(prompt, imageData) {
 async function runCleaning(preparedText, options = {}) {
   const client = getClient();
 
-  const prompt = buildPrompt({
-    text: preparedText,
-    documentType: options.documentType || 'school',
-    country: options.country || 'DRC',
-    language: options.language || 'French',
-  });
+  // Zone mode: use the specialized zone-based prompt instead of the raw text prompt
+  const isZoneMode = !!(options.zoneTexts && Object.keys(options.zoneTexts).length > 0);
+
+  const prompt = isZoneMode
+    ? buildZonePrompt(options.zoneTexts)
+    : buildPrompt({
+        text: preparedText,
+        documentType: options.documentType || 'school',
+        country: options.country || 'DRC',
+        language: options.language || 'French',
+      });
 
   const hasImage = !!options.imageData;
 
-  // Use gpt-4o for vision (image), gpt-4o-mini for text-only
-  const model = hasImage
+  // gpt-4o for vision or zone mode (better at spatial reasoning), gpt-4o-mini for plain text
+  const model = (hasImage || isZoneMode)
     ? 'gpt-4o'
     : (config.OPENAI_MODEL || 'gpt-4o-mini');
 
-  const systemPrompt = hasImage
+  const systemPrompt = isZoneMode
+    ? 'You are an expert at reading DRC school bulletin documents. The document has been split into semantic zones. Cross-reference zone_cours, zone_periodes and zone_notes to reconstruct the grades matrix. Return only valid JSON.'
+    : hasImage
     ? 'You are an expert at reading DRC school bulletin documents. You have been given the document image AND the OCR text. Use BOTH to extract accurate data — prefer what you see in the image for handwritten values where OCR may be wrong. Return only valid JSON.'
     : 'You are an expert at reading DRC school bulletin documents. Return only valid JSON. No markdown, no explanation.';
 
   const userContent = buildUserContent(prompt, options.imageData || null);
 
-  console.log(`[AI] Calling OpenAI model=${model}, vision=${hasImage}`);
+  console.log(`[AI] Calling OpenAI model=${model}, vision=${hasImage}, zoneMode=${isZoneMode}`);
 
   const response = await client.chat.completions.create({
     model,

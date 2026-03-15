@@ -39,6 +39,7 @@ router.post('/process/:ocrDocumentId', async (req, res, next) => {
       documentType: req.body.documentType || 'unknown',
       country: req.body.country || 'DRC',
       language: req.body.language || 'French',
+      zoneTexts: req.body.zoneTexts || null, // forwarded from zone-based OCR editor
     };
     const result = await runAICleaning(ocrDocumentId, options);
     res.json(result);

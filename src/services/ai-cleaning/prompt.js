@@ -153,4 +153,150 @@ Return ONLY one valid JSON object. ALL keys must be present (null if not found):
 CRITICAL: table_name MUST be "bulletin_scolaire". Return ONLY JSON, no markdown, no backticks.`;
 }
 
-module.exports = { buildPrompt };
+/**
+ * Build a zone-based prompt when the user has manually defined document regions.
+ * Each zone text is already extracted by Vision API and corresponds to a specific
+ * semantic area of the bulletin. This allows OpenAI to reconstruct the grades matrix
+ * precisely: zone_cours row i + zone_periodes col j = zone_notes cell (i, j).
+ *
+ * @param {object} zoneTexts - { zone_administrative?, zone_eleve?, zone_cours?,
+ *                               zone_periodes?, zone_notes?, zone_total? }
+ * @returns {string}
+ */
+function buildZonePrompt(zoneTexts) {
+  const z = zoneTexts || {};
+
+  const section = (title, text) => {
+    if (!text || !text.trim()) return '';
+    return `\n=== ${title} ===\n${text.trim()}\n`;
+  };
+
+  const zonesBlock = [
+    section(
+      'ZONE ADMINISTRATIVE (Province, Ville, Commune, École)',
+      z.zone_administrative
+    ),
+    section(
+      'ZONE INFORMATIONS ÉLÈVE (Élève, Sexe, Né(e)à, Le, Classe, N°Perm)',
+      z.zone_eleve
+    ),
+    section(
+      'ZONE LISTE DES COURS — une matière par ligne (ligne 1 = 1ère matière, ligne 2 = 2ème…)',
+      z.zone_cours
+    ),
+    section(
+      'ZONE PÉRIODES / TRIMESTRES — colonnes de gauche à droite (colonne 1 = 1er trim., etc.)',
+      z.zone_periodes
+    ),
+    section(
+      'ZONE NOTES — matrice : ligne i = matière i de zone_cours, colonne j = période j de zone_periodes',
+      z.zone_notes
+    ),
+    section(
+      'ZONE TOTAUX (Total, Pourcentage, Rang, Mention, Effectif, Directeur)',
+      z.zone_total
+    ),
+  ].filter(Boolean).join('');
+
+  const hasContent = zonesBlock.trim().length > 0;
+
+  return `You are an expert AI specialized in reading DRC (Democratic Republic of Congo) school report cards (bulletins scolaires).
+
+The document has been split into semantic zones by the user and each zone has been OCR'd separately.
+Use the zones to reconstruct the full bulletin data accurately.
+
+CRITICAL RULE FOR GRADES TABLE:
+- zone_cours lists subject NAMES, one per line (line 1 = subject 1, line 2 = subject 2…)
+- zone_periodes lists period/trimestre HEADERS left to right (col 1 = period 1, col 2 = period 2…)
+- zone_notes contains the GRADES as a matrix — row i corresponds to subject i from zone_cours,
+  column j corresponds to period j from zone_periodes.
+  Example: if zone_cours has "Maths" on line 1 and zone_periodes has "1er Trim." in col 1,
+  then zone_notes row 1 col 1 = Maths grade for 1er Trim.
+
+${hasContent
+  ? `Document zones extracted by OCR:\n${zonesBlock}`
+  : '[EMPTY — no zones provided. Return nulls with confidence: 0.02]'}
+
+OCR of handwritten text often contains errors. You MUST:
+- Correct obvious OCR errors in handwritten words
+- Reconstruct partial words from context
+- Handle mixed case, accent errors, and spacing issues
+- Normalize names to Title Case, sexe to "M" or "F", dates to YYYY-MM-DD
+
+════════════════════════════════════════════════════════
+ZONES MAPPING TO FIELDS
+════════════════════════════════════════════════════════
+
+zone_administrative → province, ville, commune, etablissement
+zone_eleve          → nom_eleve, sexe, lieu_naissance, date_naissance, classe, numero_perm
+zone_cours + zone_periodes + zone_notes → matieres[] array (cross-reference the three zones)
+zone_total          → total_points, total_max, pourcentage, moyenne, rang, effectif_classe,
+                      mention, directeur, observations, annee_scolaire, trimestre
+
+════════════════════════════════════════════════════════
+OUTPUT
+════════════════════════════════════════════════════════
+
+Return ONLY one valid JSON object. ALL keys must be present (null if not found):
+
+{
+  "cleaned_data": {
+    "province":        string | null,
+    "ville":           string | null,
+    "commune":         string | null,
+    "etablissement":   string | null,
+    "nom_eleve":       string | null,
+    "sexe":            "M" | "F" | null,
+    "lieu_naissance":  string | null,
+    "date_naissance":  string | null,
+    "classe":          string | null,
+    "numero_perm":     string | null,
+    "annee_scolaire":  string | null,
+    "trimestre":       string | null,
+    "matieres":        [{ "nom": string, "note": number|null, "max": number, "coeff": number|null, "points": number|null }],
+    "total_points":    number | null,
+    "total_max":       number | null,
+    "pourcentage":     number | null,
+    "moyenne":         number | null,
+    "rang":            string | null,
+    "effectif_classe": number | null,
+    "mention":         string | null,
+    "directeur":       string | null,
+    "observations":    string | null
+  },
+  "detected_fields": [ /* names of non-null fields */ ],
+  "errors": [],
+  "confidence": /* 0.0–1.0 based on how many fields were successfully extracted */,
+  "schema_proposal": {
+    "table_name": "bulletin_scolaire",
+    "fields": [
+      { "name": "province",        "type": "string",  "required": false },
+      { "name": "ville",           "type": "string",  "required": false },
+      { "name": "commune",         "type": "string",  "required": false },
+      { "name": "etablissement",   "type": "string",  "required": true  },
+      { "name": "nom_eleve",       "type": "string",  "required": true  },
+      { "name": "sexe",            "type": "string",  "required": false },
+      { "name": "lieu_naissance",  "type": "string",  "required": false },
+      { "name": "date_naissance",  "type": "date",    "required": false },
+      { "name": "classe",          "type": "string",  "required": true  },
+      { "name": "numero_perm",     "type": "string",  "required": false },
+      { "name": "annee_scolaire",  "type": "string",  "required": true  },
+      { "name": "trimestre",       "type": "string",  "required": true  },
+      { "name": "matieres",        "type": "json",    "required": true  },
+      { "name": "total_points",    "type": "number",  "required": false },
+      { "name": "total_max",       "type": "number",  "required": false },
+      { "name": "pourcentage",     "type": "number",  "required": false },
+      { "name": "moyenne",         "type": "number",  "required": false },
+      { "name": "rang",            "type": "string",  "required": false },
+      { "name": "effectif_classe", "type": "number",  "required": false },
+      { "name": "mention",         "type": "string",  "required": false },
+      { "name": "directeur",       "type": "string",  "required": false },
+      { "name": "observations",    "type": "string",  "required": false }
+    ]
+  }
+}
+
+CRITICAL: table_name MUST be "bulletin_scolaire". Return ONLY JSON, no markdown, no backticks.`;
+}
+
+module.exports = { buildPrompt, buildZonePrompt };

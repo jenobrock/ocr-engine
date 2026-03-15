@@ -4,6 +4,10 @@ const OcrDocument = require('../models/OcrDocument');
 const { upload } = require('../middleware/upload');
 const { auth } = require('../middleware/auth');
 const { runOcr } = require('../services/vision.service');
+const { getPreviewBuffer, cropZone } = require('../services/image.service');
+const { getVisionClient } = require('../config/vision');
+
+const LANGUAGE_HINTS = ['fr', 'fr-CD'];
 
 const router = express.Router();
 
@@ -227,6 +231,121 @@ router.get('/list', async (req, res, next) => {
       OcrDocument.countDocuments(filter),
     ]);
     res.json({ items, total });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/ocr/preview/:id
+ * Serve a document as a PNG image for zone editor display.
+ * Supports token via query param (?token=...) for <img src="..."> usage.
+ */
+router.get('/preview/:id', async (req, res, next) => {
+  try {
+    const id = req.params.id;
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(404).json({ error: 'Document not found' });
+    }
+    const doc = await OcrDocument.findById(id);
+    if (!doc) return res.status(404).json({ error: 'Document not found' });
+
+    const buf = await getPreviewBuffer(doc.filePath, doc.mimeType);
+
+    res.set('Content-Type', 'image/png');
+    res.set('Cache-Control', 'private, max-age=3600');
+    res.send(buf);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /api/ocr/process-zones/:id
+ * Body: { zones: [{ type: string, x, y, w, h }] }  (x/y/w/h in 0.0–1.0 ratios)
+ * - Converts document to image (preview)
+ * - Crops each zone with sharp
+ * - Calls Vision API on each crop
+ * - Saves combined OCR text to OcrDocument and marks status = 'processed'
+ * - Returns { zoneTexts: { zone_type: "text" }, zones: [{ type, text }] }
+ */
+router.post('/process-zones/:id', async (req, res, next) => {
+  try {
+    const id = req.params.id;
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(404).json({ error: 'Document not found' });
+    }
+    const doc = await OcrDocument.findById(id);
+    if (!doc) return res.status(404).json({ error: 'Document not found' });
+
+    const { zones } = req.body;
+    if (!Array.isArray(zones) || zones.length === 0) {
+      return res.status(400).json({ error: 'zones array is required' });
+    }
+
+    // Check Vision credentials before starting
+    try {
+      getVisionClient();
+    } catch (credErr) {
+      return res.status(503).json({ error: credErr.message });
+    }
+
+    console.log(`[Zones] Processing ${zones.length} zone(s) for doc ${id}`);
+
+    // Build preview buffer once (shared across all zone crops)
+    const previewBuf = await getPreviewBuffer(doc.filePath, doc.mimeType);
+
+    const client = getVisionClient();
+    const zoneResults = [];
+    const zoneTexts = {};
+
+    for (const zone of zones) {
+      const { type, x, y, w, h } = zone;
+      if (!type || w <= 0 || h <= 0) continue;
+
+      try {
+        const cropBuf = await cropZone(previewBuf, { x, y, w, h });
+
+        const [result] = await client.documentTextDetection({
+          image: { content: cropBuf },
+          imageContext: { languageHints: LANGUAGE_HINTS },
+        });
+
+        const text = (result?.fullTextAnnotation?.text || '').trim();
+        console.log(`[Zones] ${type}: ${text.length} chars`);
+
+        // If multiple zones of same type, concatenate
+        if (zoneTexts[type]) {
+          zoneTexts[type] += '\n' + text;
+        } else {
+          zoneTexts[type] = text;
+        }
+
+        zoneResults.push({ type, text });
+      } catch (zoneErr) {
+        console.warn(`[Zones] Error on zone ${type}:`, zoneErr.message);
+        zoneTexts[type] = zoneTexts[type] || '';
+        zoneResults.push({ type, text: '', error: zoneErr.message });
+      }
+    }
+
+    // Combine all zone texts as the document's fullText
+    const combinedText = Object.entries(zoneTexts)
+      .map(([type, text]) => `=== ${type.toUpperCase()} ===\n${text}`)
+      .join('\n\n');
+
+    // Update OcrDocument with combined text and mark as processed
+    doc.fullText = combinedText;
+    doc.confidence = 0.8;
+    doc.pages = [];
+    doc.status = 'processed';
+    doc.errorLog = null;
+    doc.updatedAt = new Date();
+    await doc.save();
+
+    console.log(`[Zones] Done. Combined text: ${combinedText.length} chars`);
+
+    res.json({ zoneTexts, zones: zoneResults });
   } catch (err) {
     next(err);
   }

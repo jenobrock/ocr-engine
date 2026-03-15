@@ -10,10 +10,13 @@ function auth(req, res, next) {
     return next();
   }
 
-  if (config.JWT_SECRET && bearer && bearer.startsWith('Bearer ')) {
-    const token = bearer.slice(7);
+  // Token from Authorization header or from query param (needed for <img src="...?token=...">)
+  const rawToken = (bearer && bearer.startsWith('Bearer ') ? bearer.slice(7) : null)
+    || req.query.token;
+
+  if (config.JWT_SECRET && rawToken) {
     try {
-      jwt.verify(token, config.JWT_SECRET);
+      jwt.verify(rawToken, config.JWT_SECRET);
       req.authenticated = true;
       return next();
     } catch (e) {
