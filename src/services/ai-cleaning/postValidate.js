@@ -80,57 +80,32 @@ function postValidate(cleaned_data, schema_proposal = {}) {
         for (const mat of matieres) {
           if (!mat.nom) { errors.push('subject_missing_name'); continue; }
 
-          const coeff = Number(mat.coeff ?? 1);
-          const maxTotal = mat.max_total !== null && mat.max_total !== undefined
-            ? Number(mat.max_total) : null;
           const totalGen = mat.total_general !== null && mat.total_general !== undefined
             ? Number(mat.total_general) : null;
 
-          // Validate individual period notes against max_periode
-          if (mat.max_periode) {
-            const maxP = Number(mat.max_periode);
-            for (const pKey of ['periode_1', 'periode_2', 'periode_3', 'periode_4']) {
-              if (mat[pKey] !== null && mat[pKey] !== undefined) {
-                const v = Number(mat[pKey]);
-                if (!isNaN(v) && v > maxP) {
-                  errors.push(`note_exceeds_max_${mat.nom.replace(/\s+/g, '_').toLowerCase()}_${pKey}`);
-                }
-                if (!isNaN(v) && v < 0) {
-                  errors.push(`negative_note_${mat.nom.replace(/\s+/g, '_').toLowerCase()}_${pKey}`);
-                }
-              }
-            }
-          }
-
-          // Validate exam notes
-          if (mat.max_examen) {
-            const maxE = Number(mat.max_examen);
-            for (const eKey of ['examen_s1', 'examen_s2']) {
-              if (mat[eKey] !== null && mat[eKey] !== undefined) {
-                const v = Number(mat[eKey]);
-                if (!isNaN(v) && v > maxE) {
-                  errors.push(`note_exceeds_max_${mat.nom.replace(/\s+/g, '_').toLowerCase()}_${eKey}`);
-                }
+          // Validate that individual period notes are non-negative
+          for (const pKey of ['periode_1', 'periode_2', 'periode_3', 'periode_4', 'examen_s1', 'examen_s2']) {
+            if (mat[pKey] !== null && mat[pKey] !== undefined) {
+              const v = Number(mat[pKey]);
+              if (!isNaN(v) && v < 0) {
+                errors.push(`negative_note_${mat.nom.replace(/\s+/g, '_').toLowerCase()}_${pKey}`);
               }
             }
           }
 
           // Accumulate totals for cross-check
-          if (totalGen !== null && !isNaN(totalGen) && !isNaN(coeff)) {
-            computedTotal += totalGen * coeff;
-          }
-          if (maxTotal !== null && !isNaN(maxTotal) && !isNaN(coeff)) {
-            computedMax += maxTotal * coeff;
+          if (totalGen !== null && !isNaN(totalGen)) {
+            computedTotal += totalGen;
           }
         }
 
-        // Cross-check global totals if provided (loose tolerance)
+        // Cross-check global totals if provided (very loose tolerance — handwritten values)
         if (
           cleaned_data.total_points !== null && cleaned_data.total_points !== undefined &&
           computedTotal > 0
         ) {
           const diff = Math.abs(Number(cleaned_data.total_points) - computedTotal);
-          if (diff > 5) { // allow rounding tolerance across many subjects
+          if (diff > 20) { // generous tolerance — handwriting OCR errors are common
             errors.push('total_points_mismatch');
           }
         }

@@ -73,36 +73,35 @@ The DRC bulletin uses a detailed per-period structure. Each subject has grades a
   Total Général
 
 CRITICAL — "matieres" array rules:
-- Extract ONLY the subject name from the left column ("nom"). Do NOT include max values or notes from that column.
-- For each subject, fill in the 9 period/score columns below (null if not found or illegible):
+- Extract ONLY the subject name from the left column ("nom"). Do NOT include anything else from that column.
+- THE NOTES ARE HANDWRITTEN — they are filled in by hand by teachers. Read carefully even if the writing is unclear. Common OCR confusions: 1↔l↔I, 0↔O↔6, 5↔S, 7↔1. Always produce a number, even an approximate one.
+- IGNORE any row labeled "MAXIMA", "MAX", "MAXIMUM" or similar — these are not subject rows.
+- IGNORE any row labeled "TAUX", "POURCENTAGE", "%" — these are summary rows, not subjects.
+- For each subject, fill in the 9 period/score columns below (null only if truly unreadable):
 
   { "nom": string,
-    "coeff": number | null,
-    "max_periode": number | null,   // max points per period (often 10 or 20)
-    "max_examen":  number | null,   // max points for each semester exam (often 30 or 50)
-    "max_total":   number | null,   // max total général for this subject
-    "periode_1":   number | null,   // 1ère Période / 1P
-    "periode_2":   number | null,   // 2ème Période / 2P
-    "periode_3":   number | null,   // 3ème Période / 3P
-    "periode_4":   number | null,   // 4ème Période / 4P
-    "examen_s1":   number | null,   // Examen 1er Semestre
+    "periode_1":   number | null,   // 1ère Période / 1P  (HANDWRITTEN)
+    "periode_2":   number | null,   // 2ème Période / 2P  (HANDWRITTEN)
+    "periode_3":   number | null,   // 3ème Période / 3P  (HANDWRITTEN)
+    "periode_4":   number | null,   // 4ème Période / 4P  (HANDWRITTEN)
+    "examen_s1":   number | null,   // Examen 1er Semestre (HANDWRITTEN)
     "total_s1":    number | null,   // Total 1er Semestre
-    "examen_s2":   number | null,   // Examen 2ème Semestre
+    "examen_s2":   number | null,   // Examen 2ème Semestre (HANDWRITTEN)
     "total_s2":    number | null,   // Total 2ème Semestre
     "total_general": number | null  // Total Général pour ce cours
   }
 
-- Include ALL subjects even if all notes are null.
-- total_s1 = periode_1 + periode_2 + examen_s1 (compute if missing)
-- total_s2 = periode_3 + periode_4 + examen_s2 (compute if missing)
-- total_general = total_s1 + total_s2 (compute if missing)
+- Include ALL subjects (skip MAXIMA and TAUX rows).
+- total_s1 = periode_1 + periode_2 + examen_s1 (compute if the individual values are known)
+- total_s2 = periode_3 + periode_4 + examen_s2 (compute if the individual values are known)
+- total_general = total_s1 + total_s2 (compute if both totals are known)
 
-Summary fields (bottom of table):
+Summary fields (usually printed or stamped at the bottom — NOT handwritten):
 - "annee_scolaire"  → e.g. "2023-2024"
-- "semestre"        → "1er semestre" | "2ème semestre" | "Annuel" (replaces trimestre)
-- "total_points"    → sum of all subjects' total_general × coeff
-- "total_max"       → maximum possible total
-- "pourcentage"     → total_points / total_max × 100, round to 2 decimals
+- "semestre"        → "1er semestre" | "2ème semestre" | "Annuel"
+- "total_points"    → overall total of all subjects
+- "total_max"       → maximum possible total (from the MAXIMA row if present)
+- "pourcentage"     → percentage (from the TAUX row if present)
 - "moyenne"         → average out of 20
 - "rang"            → class rank (string like "3ème" or number)
 - "effectif_classe" → number of students in class
@@ -132,8 +131,7 @@ Return ONLY one valid JSON object. ALL keys must be present (null if not found):
     "semestre":        string | null,
     "matieres": [
       {
-        "nom": string, "coeff": number|null,
-        "max_periode": number|null, "max_examen": number|null, "max_total": number|null,
+        "nom": string,
         "periode_1": number|null, "periode_2": number|null,
         "periode_3": number|null, "periode_4": number|null,
         "examen_s1": number|null, "total_s1": number|null,
@@ -214,20 +212,16 @@ function buildZonePrompt(zoneTexts) {
       z.zone_eleve
     ),
     section(
-      'ZONE LISTE DES COURS — NOMS UNIQUEMENT, une matière par ligne (pas de maxima, pas de notes). Ligne 1 = matière 1, ligne 2 = matière 2…',
+      'ZONE LISTE DES COURS — NOMS DES MATIÈRES UNIQUEMENT (une par ligne, pas de maxima ni de notes). Ligne 1 = matière 1, ligne 2 = matière 2… IGNORER toute ligne "MAXIMA" ou "TAUX".',
       z.zone_cours
     ),
     section(
-      'ZONE PÉRIODES — en-têtes de colonnes de gauche à droite. Ordre attendu: 1ère Période, 2ème Période, 3ème Période, 4ème Période, Examen S1, Total S1, Examen S2, Total S2, Total Général',
+      'ZONE PÉRIODES — en-têtes de colonnes de gauche à droite. Ordre attendu : 1ère Période, 2ème Période, 3ème Période, 4ème Période, Examen S1, Total S1, Examen S2, Total S2, Total Général. IGNORER la ligne des maxima.',
       z.zone_periodes
     ),
     section(
-      'ZONE NOTES — matrice des notes : ligne i = matière i de zone_cours, colonne j = période j de zone_periodes. Colonnes attendues: 1P, 2P, 3P, 4P, ExamS1, TotS1, ExamS2, TotS2, TotalGén',
+      'ZONE NOTES — matrice MANUSCRITE : ligne i = matière i, colonne j = période j. ATTENTION : écriture manuscrite des enseignants. Confusions fréquentes : 1↔l, 0↔O, 5↔S. IGNORER la ligne "MAXIMA" et la ligne "TAUX". Colonnes : 1P, 2P, 3P, 4P, ExamS1, TotS1, ExamS2, TotS2, TotalGén.',
       z.zone_notes
-    ),
-    section(
-      'ZONE TOTAUX (Total général, Pourcentage, Rang, Mention, Effectif, Directeur, Année scolaire, Semestre)',
-      z.zone_total
     ),
   ].filter(Boolean).join('');
 
@@ -240,15 +234,19 @@ Use the zones to reconstruct the full bulletin data accurately.
 
 CRITICAL RULE FOR GRADES TABLE:
 - zone_cours lists ONLY subject NAMES (no maxima, no totals) — line i = subject i
-- zone_periodes lists column HEADERS (do not include maxima row) — 9 expected columns:
+  → SKIP any line labeled "MAXIMA", "MAX", "TAUX", "%" — these are NOT subjects
+- zone_periodes lists column HEADERS — 9 expected columns:
     1ère Période (1P) | 2ème Période (2P) | 3ème Période (3P) | 4ème Période (4P)
     | Examen S1 | Total S1 | Examen S2 | Total S2 | Total Général
-- zone_notes is a matrix: row i = subject i from zone_cours, column j = period j from zone_periodes
-  Example: zone_cours line 1 = "Maths", zone_periodes col 1 = "1P" → zone_notes row 1 col 1 = Maths 1P grade
-- If fewer than 9 period columns are visible, map what is present and leave others null
-- total_s1 = periode_1 + periode_2 + examen_s1 (compute if not given)
-- total_s2 = periode_3 + periode_4 + examen_s2 (compute if not given)
-- total_general = total_s1 + total_s2 (compute if not given)
+  → IGNORE any "MAXIMA" or "TAUX" row in zone_periodes
+- zone_notes is a matrix of HANDWRITTEN grades:
+    row i = subject i from zone_cours, column j = period j from zone_periodes
+  → IGNORE the MAXIMA row and TAUX row in zone_notes
+  → Notes are handwritten by teachers. Common confusions: 1↔l↔I, 0↔O↔6, 5↔S. Produce numbers.
+- If fewer than 9 period columns are visible, map what is present, leave others null
+- total_s1 = periode_1 + periode_2 + examen_s1 (compute if not explicitly given)
+- total_s2 = periode_3 + periode_4 + examen_s2 (compute if not explicitly given)
+- total_general = total_s1 + total_s2 (compute if not explicitly given)
 
 ${hasContent
   ? `Document zones extracted by OCR:\n${zonesBlock}`
@@ -267,8 +265,8 @@ ZONES MAPPING TO FIELDS
 zone_administrative → province, ville, commune, etablissement
 zone_eleve          → nom_eleve, sexe, lieu_naissance, date_naissance, classe, numero_perm
 zone_cours + zone_periodes + zone_notes → matieres[] array (cross-reference the three zones)
-zone_total          → total_points, total_max, pourcentage, moyenne, rang, effectif_classe,
-                      mention, directeur, observations, annee_scolaire, semestre
+Extract from the full document context → total_points, total_max, pourcentage, moyenne, rang,
+  effectif_classe, mention, directeur, observations, annee_scolaire, semestre
 
 ════════════════════════════════════════════════════════
 OUTPUT
@@ -292,8 +290,7 @@ Return ONLY one valid JSON object. ALL keys must be present (null if not found):
     "semestre":        string | null,
     "matieres": [
       {
-        "nom": string, "coeff": number|null,
-        "max_periode": number|null, "max_examen": number|null, "max_total": number|null,
+        "nom": string,
         "periode_1": number|null, "periode_2": number|null,
         "periode_3": number|null, "periode_4": number|null,
         "examen_s1": number|null, "total_s1": number|null,
